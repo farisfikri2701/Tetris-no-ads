@@ -205,11 +205,6 @@
         <span id="toast-title" class="font-arcade text-sm sm:text-lg font-bold text-yellow-300 drop-shadow-[0_0_12px_rgba(255,230,0,0.9)]">TETRIS!</span>
         <span id="toast-points" class="font-tech text-xs sm:text-sm font-black text-cyan-300">+800</span>
       </div>
-
-      <!-- Gesture Visual Floating Prompt (Subtle) -->
-      <div id="gesture-hint" class="pointer-events-none absolute bottom-3 inset-x-0 text-center opacity-40 transition-opacity text-[10px] font-tech tracking-wider text-cyan-200/80">
-        <span>↔ SLIDE • ↑ HOLD • ↓ DROP • TAP ↺</span>
-      </div>
     </div>
   </main>
 
@@ -588,11 +583,10 @@
     let hasActiveGame = false;
     let toastTimeout = null;
 
-    // Advanced Line Dissolve Animation State & Explosive Particles
+    // Line Dissolve Animation State
     let clearingLines = [];
     let clearAnimProgress = 0; // 0.0 -> 1.0
     let isClearing = false;
-    let particles = [];
 
     // In-memory score logs
     let scoreHistory = [
@@ -778,32 +772,6 @@
       }
     }
 
-    function spawnLineClearParticles(rowIndices) {
-      rowIndices.forEach(rowY => {
-        const centerY = (rowY + 0.5) * BLOCK_SIZE;
-        for (let col = 0; col < COLS; col++) {
-          const centerX = (col + 0.5) * BLOCK_SIZE;
-          const cellColor = board[rowY][col]?.color || '#00f0ff';
-
-          // Spawn 4-6 sparks per cell
-          for (let p = 0; p < 5; p++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 1.5 + Math.random() * 5.5;
-            particles.push({
-              x: centerX,
-              y: centerY,
-              vx: Math.cos(angle) * speed,
-              vy: Math.sin(angle) * speed - 1.2,
-              size: 2 + Math.random() * 3.5,
-              color: cellColor,
-              alpha: 1.0,
-              life: 0.95 - Math.random() * 0.2
-            });
-          }
-        }
-      });
-    }
-
     function lockPiece() {
       if (!currentPiece) return;
       for (let y = 0; y < currentPiece.matrix.length; y++) {
@@ -836,7 +804,6 @@
         isClearing = true;
         clearingLines = fullRows;
         clearAnimProgress = 0;
-        spawnLineClearParticles(fullRows);
         triggerScreenShake(fullRows.length === 4);
         audio.clearLine(fullRows.length);
       } else {
@@ -945,20 +912,6 @@
       audio.hardDrop();
       triggerScreenShake(false);
 
-      // Impact particles at the base of the hard drop
-      for (let i = 0; i < 16; i++) {
-        particles.push({
-          x: (currentPiece.x + 1 + Math.random() * 2) * BLOCK_SIZE,
-          y: (ghostY + 2) * BLOCK_SIZE,
-          vx: (Math.random() - 0.5) * 6,
-          vy: -Math.random() * 3.5,
-          size: 2 + Math.random() * 2.5,
-          color: currentPiece.color,
-          alpha: 0.9,
-          life: 0.92
-        });
-      }
-
       lockPiece();
       draw();
     }
@@ -986,47 +939,44 @@
       targetCtx.save();
       targetCtx.globalAlpha = alpha;
 
+      const pad = 1;
+      const bw = size - pad * 2;
+      const bh = size - pad * 2;
+      const radius = Math.max(2, Math.floor(size * 0.12));
+
       if (isGhost) {
         targetCtx.strokeStyle = color;
         targetCtx.lineWidth = 1.5;
-        targetCtx.strokeRect(x + 1.5, y + 1.5, size - 3, size - 3);
-        targetCtx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-        targetCtx.fillRect(x + 2, y + 2, size - 4, size - 4);
+        targetCtx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+        targetCtx.beginPath();
+        if (targetCtx.roundRect) {
+          targetCtx.roundRect(x + pad, y + pad, bw, bh, radius);
+        } else {
+          targetCtx.rect(x + pad, y + pad, bw, bh);
+        }
+        targetCtx.fill();
+        targetCtx.stroke();
         targetCtx.restore();
         return;
       }
 
-      // Block Fill
+      // Smooth, solid modern block with soft rounded corners (no inner lines or bevel cuts)
+      targetCtx.beginPath();
+      if (targetCtx.roundRect) {
+        targetCtx.roundRect(x + pad, y + pad, bw, bh, radius);
+      } else {
+        targetCtx.rect(x + pad, y + pad, bw, bh);
+      }
       targetCtx.fillStyle = color;
-      targetCtx.fillRect(x, y, size, size);
-
-      // Cyber Bevel Highlights
-      targetCtx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-      targetCtx.beginPath();
-      targetCtx.moveTo(x, y);
-      targetCtx.lineTo(x + size, y);
-      targetCtx.lineTo(x + size - 2.5, y + 2.5);
-      targetCtx.lineTo(x + 2.5, y + 2.5);
-      targetCtx.lineTo(x + 2.5, y + size - 2.5);
-      targetCtx.lineTo(x, y + size);
-      targetCtx.closePath();
       targetCtx.fill();
 
-      // Cyber Bevel Shadows
-      targetCtx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-      targetCtx.beginPath();
-      targetCtx.moveTo(x + size, y);
-      targetCtx.lineTo(x + size, y + size);
-      targetCtx.lineTo(x, y + size);
-      targetCtx.lineTo(x + 2.5, y + size - 2.5);
-      targetCtx.lineTo(x + size - 2.5, y + size - 2.5);
-      targetCtx.lineTo(x + size - 2.5, y + 2.5);
-      targetCtx.closePath();
+      // Gentle smooth surface gloss without interior lines
+      const gloss = targetCtx.createLinearGradient(x, y, x, y + bh);
+      gloss.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
+      gloss.addColorStop(0.5, 'rgba(255, 255, 255, 0.0)');
+      gloss.addColorStop(1, 'rgba(0, 0, 0, 0.18)');
+      targetCtx.fillStyle = gloss;
       targetCtx.fill();
-
-      // Inner Core Specular Glow
-      targetCtx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-      targetCtx.fillRect(x + 3.5, y + 3.5, size - 7, size - 7);
 
       targetCtx.restore();
     }
@@ -1061,7 +1011,7 @@
           }
         }
 
-        // Dissolve Neon Flash & Shockwave on clearing rows
+        // Smooth neon pulse dissolve on clearing rows
         if (isThisRowClearing) {
           boardCtx.save();
           boardCtx.fillStyle = `rgba(255, 255, 255, ${Math.sin(clearAnimProgress * Math.PI) * 0.85})`;
@@ -1095,30 +1045,6 @@
             }
           }
         }
-      }
-
-      // Draw & Update Explosive Neon Particles
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.16; // gravity
-        p.alpha *= p.life;
-
-        if (p.alpha < 0.02) {
-          particles.splice(i, 1);
-          continue;
-        }
-
-        boardCtx.save();
-        boardCtx.globalAlpha = p.alpha;
-        boardCtx.fillStyle = p.color;
-        boardCtx.shadowColor = p.color;
-        boardCtx.shadowBlur = 10;
-        boardCtx.beginPath();
-        boardCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        boardCtx.fill();
-        boardCtx.restore();
       }
     }
 
@@ -1352,7 +1278,6 @@
       canHold = true;
       clearingLines = [];
       isClearing = false;
-      particles = [];
 
       menuModal.classList.add('hidden');
       gameoverModal.classList.add('hidden');
