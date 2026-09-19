@@ -98,17 +98,6 @@
       box-shadow: 0 0 16px rgba(0, 240, 255, 0.5);
     }
 
-    /* Scanlines effect */
-    .scanlines {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 40;
-      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%);
-      background-size: 100% 3px;
-      opacity: 0.3;
-    }
-
     /* Screen shake dynamic animation */
     .shake-light {
       animation: shakeScreen 0.18s ease-in-out;
@@ -136,7 +125,6 @@
 </head>
 
 <body class="cyber-bg flex flex-col items-center justify-between p-2 sm:p-3 h-[100dvh] max-h-[100dvh] w-full overflow-hidden">
-  <div class="scanlines"></div>
 
   <!-- Top Cyber Status Bar -->
   <header class="w-full max-w-md flex items-center justify-between px-2 pt-1 pb-1 shrink-0 z-10">
@@ -219,6 +207,20 @@
         CYBER TETRIS
       </h2>
       <p class="text-xs text-cyan-300/70 font-mono mb-5">NEXT-GEN MOBILE ARCADE</p>
+
+      <!-- Saved Game Alert Prompt -->
+      <div id="saved-game-notice" class="w-full hidden mb-4 p-3 rounded-xl bg-cyan-950/70 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.2)]">
+        <div class="flex items-center justify-center gap-2 text-cyan-300 font-tech font-bold text-xs tracking-wider mb-1">
+          <i class="fa-solid fa-floppy-disk text-yellow-300"></i>
+          <span>UNFINISHED RUN DETECTED</span>
+        </div>
+        <p class="text-[11px] text-gray-300 mb-2">Resume where you left off?</p>
+        <div class="text-[10px] font-mono text-cyan-200 bg-slate-950/80 py-1 px-2 rounded-lg border border-cyan-800/40 flex justify-around">
+          <span>Score: <b id="saved-score" class="text-yellow-400">0</b></span>
+          <span>Level: <b id="saved-level" class="text-purple-300">1</b></span>
+          <span>Lines: <b id="saved-lines" class="text-pink-300">0</b></span>
+        </div>
+      </div>
 
       <!-- Best Record Badge -->
       <div class="w-full bg-slate-950/80 border border-indigo-900/60 rounded-xl p-2.5 mb-5 flex items-center justify-around">
@@ -588,11 +590,25 @@
     let clearAnimProgress = 0; // 0.0 -> 1.0
     let isClearing = false;
 
-    // In-memory score logs
-    let scoreHistory = [
-      { score: 14200, level: 6, lines: 32, date: '14:20', badge: 'CYBER ACE' },
-      { score: 7600, level: 4, lines: 18, date: '11:05', badge: 'ELITE' }
-    ];
+    // Storage Keys
+    const SESSION_KEY = 'cyber_tetris_saved_session';
+    const HISTORY_KEY = 'cyber_tetris_score_history';
+
+    // In-memory score logs with localStorage persistence
+    let scoreHistory = [];
+    try {
+      const savedHist = localStorage.getItem(HISTORY_KEY);
+      if (savedHist) {
+        scoreHistory = JSON.parse(savedHist);
+      }
+    } catch (e) {}
+
+    if (!scoreHistory || scoreHistory.length === 0) {
+      scoreHistory = [
+        { score: 14200, level: 6, lines: 32, date: '14:20', badge: 'CYBER ACE' },
+        { score: 7600, level: 4, lines: 18, date: '11:05', badge: 'ELITE' }
+      ];
+    }
 
     function refreshHighScore() {
       if (scoreHistory.length > 0) {
@@ -789,6 +805,7 @@
         }
       }
 
+      saveGameState();
       checkAndClearLines();
     }
 
@@ -838,6 +855,7 @@
       isClearing = false;
       clearingLines = [];
       clearAnimProgress = 0;
+      saveGameState();
       spawnNextPiece();
     }
 
@@ -933,6 +951,7 @@
       canHold = false;
       drawPreviews();
       draw();
+      saveGameState();
     }
 
     function drawBlock(targetCtx, x, y, size, color, isGhost = false, alpha = 1.0) {
@@ -942,7 +961,7 @@
       const pad = 1;
       const bw = size - pad * 2;
       const bh = size - pad * 2;
-      const radius = Math.max(2, Math.floor(size * 0.12));
+      const radius = Math.max(2, Math.floor(size * 0.15));
 
       if (isGhost) {
         targetCtx.strokeStyle = color;
@@ -960,7 +979,7 @@
         return;
       }
 
-      // Smooth, solid modern block with soft rounded corners (no inner lines or bevel cuts)
+      // Smooth, solid block with pure soft rounded corners — zero scanlines or interior lines
       targetCtx.beginPath();
       if (targetCtx.roundRect) {
         targetCtx.roundRect(x + pad, y + pad, bw, bh, radius);
@@ -970,11 +989,11 @@
       targetCtx.fillStyle = color;
       targetCtx.fill();
 
-      // Gentle smooth surface gloss without interior lines
+      // Subtle smooth surface illumination (no harsh lines or banding)
       const gloss = targetCtx.createLinearGradient(x, y, x, y + bh);
-      gloss.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
-      gloss.addColorStop(0.5, 'rgba(255, 255, 255, 0.0)');
-      gloss.addColorStop(1, 'rgba(0, 0, 0, 0.18)');
+      gloss.addColorStop(0, 'rgba(255, 255, 255, 0.28)');
+      gloss.addColorStop(0.3, 'rgba(255, 255, 255, 0.05)');
+      gloss.addColorStop(1, 'rgba(0, 0, 0, 0.15)');
       targetCtx.fillStyle = gloss;
       targetCtx.fill();
 
@@ -1240,15 +1259,105 @@
       requestAnimationFrame(gameLoop);
     }
 
+    function saveGameState() {
+      if (isGameOver || !hasActiveGame) return;
+      try {
+        const state = {
+          board,
+          currentPiece,
+          holdPiece,
+          canHold,
+          nextQueue,
+          score,
+          lines,
+          level,
+          dropInterval
+        };
+        localStorage.setItem(SESSION_KEY, JSON.stringify(state));
+      } catch (e) {}
+    }
+
+    function clearSavedGame() {
+      try {
+        localStorage.removeItem(SESSION_KEY);
+      } catch (e) {}
+    }
+
+    function getSavedGameState() {
+      try {
+        const raw = localStorage.getItem(SESSION_KEY);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        if (data && data.board && data.score !== undefined) {
+          return data;
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function resumeSavedGame() {
+      const saved = getSavedGameState();
+      if (!saved) {
+        startNewGame();
+        return;
+      }
+
+      board = saved.board;
+      currentPiece = saved.currentPiece;
+      holdPiece = saved.holdPiece;
+      canHold = saved.canHold;
+      nextQueue = saved.nextQueue && saved.nextQueue.length ? saved.nextQueue : [pullNextType(), pullNextType(), pullNextType()];
+      score = saved.score || 0;
+      lines = saved.lines || 0;
+      level = saved.level || 1;
+      dropInterval = saved.dropInterval || 1000;
+      dropCounter = 0;
+      isGameOver = false;
+      isPaused = false;
+      hasActiveGame = true;
+      clearingLines = [];
+      isClearing = false;
+
+      menuModal.classList.add('hidden');
+      gameoverModal.classList.add('hidden');
+      historyModal.classList.add('hidden');
+
+      audio.setTempoByLevel(level);
+      if (audio.bgmEnabled) audio.startBGM();
+
+      updateHUD();
+      drawPreviews();
+      draw();
+
+      lastTime = performance.now();
+      requestAnimationFrame(gameLoop);
+    }
+
     function openMenu() {
       audio.init();
       isPaused = true;
       audio.stopBGM();
 
-      if (hasActiveGame && !isGameOver) {
+      const savedNotice = document.getElementById('saved-game-notice');
+      const savedState = getSavedGameState();
+
+      if (savedState && !hasActiveGame) {
+        // Unfinished game from a previous login/session
+        savedNotice.classList.remove('hidden');
+        document.getElementById('saved-score').innerText = savedState.score.toLocaleString();
+        document.getElementById('saved-level').innerText = savedState.level;
+        document.getElementById('saved-lines').innerText = savedState.lines;
+
         btnContinue.classList.remove('hidden');
+        btnContinue.innerHTML = '<i class="fa-solid fa-play"></i><span>RESUME SAVED GAME</span>';
+        btnNewGameLabel.innerText = 'START NEW GAME';
+      } else if (hasActiveGame && !isGameOver) {
+        savedNotice.classList.add('hidden');
+        btnContinue.classList.remove('hidden');
+        btnContinue.innerHTML = '<i class="fa-solid fa-play"></i><span>CONTINUE GAME</span>';
         btnNewGameLabel.innerText = 'RESTART NEW GAME';
       } else {
+        savedNotice.classList.add('hidden');
         btnContinue.classList.add('hidden');
         btnNewGameLabel.innerText = 'START NEW GAME';
       }
@@ -1258,6 +1367,10 @@
     }
 
     function closeMenuAndResume() {
+      if (!hasActiveGame && getSavedGameState()) {
+        resumeSavedGame();
+        return;
+      }
       menuModal.classList.add('hidden');
       isPaused = false;
       lastTime = performance.now();
@@ -1265,6 +1378,7 @@
     }
 
     function startNewGame() {
+      clearSavedGame();
       board = createEmptyBoard();
       score = 0;
       lines = 0;
@@ -1291,6 +1405,7 @@
       updateHUD();
       drawPreviews();
       draw();
+      saveGameState();
 
       lastTime = performance.now();
       requestAnimationFrame(gameLoop);
@@ -1307,6 +1422,11 @@
 
       scoreHistory.unshift({ score, level, lines, date: timeStr, badge });
       if (scoreHistory.length > 25) scoreHistory.pop();
+
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(scoreHistory));
+      } catch (e) {}
+
       refreshHighScore();
     }
 
@@ -1378,36 +1498,36 @@
     });
     document.getElementById('btn-clear-history').addEventListener('click', () => {
       scoreHistory = [];
+      try {
+        localStorage.removeItem(HISTORY_KEY);
+      } catch (e) {}
       refreshHighScore();
       renderScoreArchive();
     });
 
-    // Sound and Theme BGM Toggles
-    const btnMusic = document.getElementById('btn-music');
-    const musicIcon = document.getElementById('music-icon');
-    btnMusic.addEventListener('click', () => {
-      audio.init();
-      audio.bgmEnabled = !audio.bgmEnabled;
-      if (audio.bgmEnabled) {
-        musicIcon.className = 'fa-solid fa-music text-pink-400';
-        if (!isPaused && !isGameOver) audio.startBGM();
-      } else {
-        musicIcon.className = 'fa-solid fa-slash text-gray-500';
-        audio.stopBGM();
-      }
+    function triggerGameOver() {
+      isGameOver = true;
+      hasActiveGame = false;
+      clearSavedGame();
+      audio.gameOver();
+      saveScoreToArchive();
+
+      document.getElementById('go-score').innerText = score.toLocaleString();
+      document.getElementById('go-lines').innerText = lines;
+      document.getElementById('go-level').innerText = level;
+      document.getElementById('go-best').innerText = highscore.toLocaleString();
+
+      gameoverModal.classList.remove('hidden');
+    }
+
+    // Auto-save on page exit/switch
+    window.addEventListener('beforeunload', () => saveGameState());
+    window.addEventListener('pagehide', () => saveGameState());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) saveGameState();
     });
 
-    const btnSound = document.getElementById('btn-sound');
-    const soundIcon = document.getElementById('sound-icon');
-    btnSound.addEventListener('click', () => {
-      audio.init();
-      audio.sfxEnabled = !audio.sfxEnabled;
-      soundIcon.className = audio.sfxEnabled ? 'fa-solid fa-volume-high text-cyan-400' : 'fa-solid fa-volume-xmark text-gray-500';
-    });
-
-    window.onload = () => {
-      resizeCanvases();
-      openMenu(); // Present welcome play menu with Resume / Start options
+    // Menu triggers
     };
   </script>
 </body>
