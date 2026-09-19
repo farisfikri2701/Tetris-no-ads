@@ -1115,54 +1115,45 @@
     let accumulatedDragX = 0;
     let accumulatedDragY = 0;
     let isSwipeProcessed = false;
+    let isPointerDown = false;
 
-    const touchSurface = document.body;
-
-    touchSurface.addEventListener('touchstart', (e) => {
-      // Don't intercept button/modal clicks
-      if (e.target.closest('button') || e.target.closest('#menu-modal') || e.target.closest('#gameover-modal') || e.target.closest('#history-modal')) {
-        return;
-      }
-      e.preventDefault();
-
+    function handleInputStart(clientX, clientY) {
       audio.init();
-      if (audio.bgmEnabled && !audio.bgmIsPlaying && !isPaused && !isGameOver) {
+      if (audio.bgmEnabled && !audio.bgmIsPlaying && !isPaused && !isGameOver && hasActiveGame) {
         audio.startBGM();
       }
 
-      const touch = e.touches[0];
-      touchStartX = touch.clientX;
-      touchStartY = touch.clientY;
+      touchStartX = clientX;
+      touchStartY = clientY;
       touchStartTime = Date.now();
       accumulatedDragX = 0;
       accumulatedDragY = 0;
       isSwipeProcessed = false;
-    }, { passive: false });
+      isPointerDown = true;
+    }
 
-    touchSurface.addEventListener('touchmove', (e) => {
-      if (e.target.closest('button') || !hasActiveGame || isPaused || isGameOver || isClearing || !currentPiece) return;
-      e.preventDefault();
+    function handleInputMove(clientX, clientY) {
+      if (!isPointerDown || !hasActiveGame || isPaused || isGameOver || isClearing || !currentPiece) return;
 
-      const touch = e.touches[0];
-      const deltaX = touch.clientX - touchStartX;
-      const deltaY = touch.clientY - touchStartY;
+      const deltaX = clientX - touchStartX;
+      const deltaY = clientY - touchStartY;
 
-      // FAST DOWNWARD SWIPE DETECTION -> HARD DROP
-      if (!isSwipeProcessed && deltaY > 75 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5) {
+      // Fast Downward Swipe -> Hard Drop
+      if (!isSwipeProcessed && deltaY > 60 && Math.abs(deltaY) > Math.abs(deltaX) * 1.4) {
         isSwipeProcessed = true;
         hardDrop();
         return;
       }
 
-      // FAST UPWARD SWIPE DETECTION -> HOLD
-      if (!isSwipeProcessed && deltaY < -60 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5) {
+      // Fast Upward Swipe -> Hold
+      if (!isSwipeProcessed && deltaY < -45 && Math.abs(deltaY) > Math.abs(deltaX) * 1.4) {
         isSwipeProcessed = true;
         triggerHold();
         return;
       }
 
-      // HORIZONTAL DRAG TO MOVE COLUMNS
-      const dragThreshold = BLOCK_SIZE * 0.82;
+      // Horizontal Column Drag
+      const dragThreshold = Math.max(20, BLOCK_SIZE * 0.75);
       const moveDiffX = deltaX - accumulatedDragX;
 
       if (Math.abs(moveDiffX) >= dragThreshold) {
@@ -1174,27 +1165,70 @@
         accumulatedDragX += (moveDiffX > 0 ? 1 : -1) * steps * dragThreshold;
       }
 
-      // SLOW DRAG DOWN FOR SOFT DROP
-      const softDropThreshold = BLOCK_SIZE * 0.95;
+      // Slow Drag Down -> Soft Drop
+      const softDropThreshold = Math.max(22, BLOCK_SIZE * 0.85);
       const moveDiffY = deltaY - accumulatedDragY;
       if (moveDiffY >= softDropThreshold) {
         softDrop();
         accumulatedDragY += softDropThreshold;
       }
-    }, { passive: false });
+    }
 
-    touchSurface.addEventListener('touchend', (e) => {
-      if (e.target.closest('button') || !hasActiveGame || isPaused || isGameOver || isClearing || !currentPiece) return;
-      e.preventDefault();
+    function handleInputEnd() {
+      if (!isPointerDown) return;
+      isPointerDown = false;
+
+      if (!hasActiveGame || isPaused || isGameOver || isClearing || !currentPiece) return;
 
       const elapsed = Date.now() - touchStartTime;
       const totalMoved = Math.hypot(accumulatedDragX, accumulatedDragY);
 
-      // Quick tap detected with minimal drag = ROTATE PIECE
-      if (!isSwipeProcessed && elapsed < 260 && totalMoved < BLOCK_SIZE * 0.7) {
+      // Quick tap with little movement -> Rotate piece
+      if (!isSwipeProcessed && elapsed < 280 && totalMoved < BLOCK_SIZE * 0.7) {
         attemptRotation(1);
       }
+    }
+
+    // Touch events for mobile
+    const touchSurface = document.body;
+
+    touchSurface.addEventListener('touchstart', (e) => {
+      if (e.target.closest('button') || e.target.closest('#menu-modal') || e.target.closest('#gameover-modal') || e.target.closest('#history-modal')) {
+        return;
+      }
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleInputStart(touch.clientX, touch.clientY);
     }, { passive: false });
+
+    touchSurface.addEventListener('touchmove', (e) => {
+      if (e.target.closest('button') || !isPointerDown) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleInputMove(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    touchSurface.addEventListener('touchend', (e) => {
+      if (e.target.closest('button')) return;
+      e.preventDefault();
+      handleInputEnd();
+    }, { passive: false });
+
+    // Mouse & Pointer fallback for desktop testing
+    touchSurface.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button') || e.target.closest('#menu-modal') || e.target.closest('#gameover-modal') || e.target.closest('#history-modal')) {
+        return;
+      }
+      handleInputStart(e.clientX, e.clientY);
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (isPointerDown) handleInputMove(e.clientX, e.clientY);
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isPointerDown) handleInputEnd();
+    });
 
     // Tap on Hold box to also trigger Hold
     document.getElementById('hud-hold-box').addEventListener('click', (e) => {
@@ -1202,10 +1236,10 @@
       triggerHold();
     });
 
-    // Keyboard Fallback for desktop testing
+    // Keyboard Fallback for desktop
     window.addEventListener('keydown', (e) => {
       audio.init();
-      if (audio.bgmEnabled && !audio.bgmIsPlaying && !isPaused && !isGameOver) {
+      if (audio.bgmEnabled && !audio.bgmIsPlaying && !isPaused && !isGameOver && hasActiveGame) {
         audio.startBGM();
       }
 
@@ -1226,16 +1260,20 @@
       }
     });
 
+    let animFrameId = null;
+
     function gameLoop(time = 0) {
-      if (isGameOver) return;
+      if (isGameOver) {
+        animFrameId = null;
+        return;
+      }
 
       const deltaTime = time - lastTime;
       lastTime = time;
 
       if (!isPaused) {
-        // Dissolve animation step
         if (isClearing) {
-          clearAnimProgress += deltaTime / 240; // ~240ms duration
+          clearAnimProgress += deltaTime / 240;
           if (clearAnimProgress >= 1.0) {
             finalizeLineClearing();
           }
@@ -1256,7 +1294,7 @@
         }
       }
 
-      requestAnimationFrame(gameLoop);
+      animFrameId = requestAnimationFrame(gameLoop);
     }
 
     function saveGameState() {
@@ -1330,7 +1368,8 @@
       draw();
 
       lastTime = performance.now();
-      requestAnimationFrame(gameLoop);
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+      animFrameId = requestAnimationFrame(gameLoop);
     }
 
     function openMenu() {
@@ -1342,7 +1381,6 @@
       const savedState = getSavedGameState();
 
       if (savedState && !hasActiveGame) {
-        // Unfinished game from a previous login/session
         savedNotice.classList.remove('hidden');
         document.getElementById('saved-score').innerText = savedState.score.toLocaleString();
         document.getElementById('saved-level').innerText = savedState.level;
@@ -1367,14 +1405,21 @@
     }
 
     function closeMenuAndResume() {
-      if (!hasActiveGame && getSavedGameState()) {
-        resumeSavedGame();
+      if (!hasActiveGame) {
+        if (getSavedGameState()) {
+          resumeSavedGame();
+        } else {
+          startNewGame();
+        }
         return;
       }
       menuModal.classList.add('hidden');
       isPaused = false;
       lastTime = performance.now();
       if (audio.bgmEnabled) audio.startBGM();
+      if (!animFrameId) {
+        animFrameId = requestAnimationFrame(gameLoop);
+      }
     }
 
     function startNewGame() {
@@ -1408,7 +1453,8 @@
       saveGameState();
 
       lastTime = performance.now();
-      requestAnimationFrame(gameLoop);
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+      animFrameId = requestAnimationFrame(gameLoop);
     }
 
     function saveScoreToArchive() {
@@ -1471,6 +1517,7 @@
     function triggerGameOver() {
       isGameOver = true;
       hasActiveGame = false;
+      clearSavedGame();
       audio.gameOver();
       saveScoreToArchive();
 
@@ -1482,13 +1529,48 @@
       gameoverModal.classList.remove('hidden');
     }
 
-    // Menu triggers
+    // Header audio controls
+    const btnMusic = document.getElementById('btn-music');
+    const musicIcon = document.getElementById('music-icon');
+    btnMusic.addEventListener('click', (e) => {
+      e.stopPropagation();
+      audio.init();
+      audio.bgmEnabled = !audio.bgmEnabled;
+      if (audio.bgmEnabled) {
+        btnMusic.classList.remove('opacity-40');
+        musicIcon.className = 'fa-solid fa-music';
+        if (!isPaused && hasActiveGame && !isGameOver) {
+          audio.startBGM();
+        }
+      } else {
+        audio.stopBGM();
+        btnMusic.classList.add('opacity-40');
+        musicIcon.className = 'fa-solid fa-music-slash';
+      }
+    });
+
+    const btnSound = document.getElementById('btn-sound');
+    const soundIcon = document.getElementById('sound-icon');
+    btnSound.addEventListener('click', (e) => {
+      e.stopPropagation();
+      audio.init();
+      audio.sfxEnabled = !audio.sfxEnabled;
+      if (audio.sfxEnabled) {
+        btnSound.classList.remove('opacity-40');
+        soundIcon.className = 'fa-solid fa-volume-high';
+      } else {
+        btnSound.classList.add('opacity-40');
+        soundIcon.className = 'fa-solid fa-volume-xmark';
+      }
+    });
+
+    // Menu and restart button triggers
     btnContinue.addEventListener('click', () => closeMenuAndResume());
     document.getElementById('btn-new-game').addEventListener('click', () => startNewGame());
     document.getElementById('btn-menu').addEventListener('click', () => openMenu());
     document.getElementById('go-restart-btn').addEventListener('click', () => startNewGame());
 
-    // History dialog
+    // History dialog triggers
     document.getElementById('btn-show-history').addEventListener('click', () => {
       renderScoreArchive();
       historyModal.classList.remove('hidden');
@@ -1505,30 +1587,18 @@
       renderScoreArchive();
     });
 
-    function triggerGameOver() {
-      isGameOver = true;
-      hasActiveGame = false;
-      clearSavedGame();
-      audio.gameOver();
-      saveScoreToArchive();
-
-      document.getElementById('go-score').innerText = score.toLocaleString();
-      document.getElementById('go-lines').innerText = lines;
-      document.getElementById('go-level').innerText = level;
-      document.getElementById('go-best').innerText = highscore.toLocaleString();
-
-      gameoverModal.classList.remove('hidden');
-    }
-
-    // Auto-save on page exit/switch
+    // Auto-save on page switch / unload
     window.addEventListener('beforeunload', () => saveGameState());
     window.addEventListener('pagehide', () => saveGameState());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) saveGameState();
     });
 
-    // Menu triggers
-    };
+    // Initialize application on startup
+    window.addEventListener('DOMContentLoaded', () => {
+      resizeCanvases();
+      openMenu();
+    });
   </script>
 </body>
 </html>
